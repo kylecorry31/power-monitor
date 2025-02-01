@@ -56,10 +56,20 @@ def get_cpu_percent():
         if is_subprocess(int(pid), process.pid, children) or not process_exists(int(pid)):
             continue
         app_process = psutil.Process(int(pid))
+
         # Get the cgroup of the app_process
         with open(f"/proc/{app_process.pid}/cgroup") as f:
             cgroup = f.read().strip()
-        if cgroup.endswith('.service') or 'app.slice' not in cgroup:
+
+        if cgroup.endswith('flatpak-session-helper.service'):
+            # Handle apps wrapped by the flatpak-session-helper
+            roots = ['systemd', 'bwrap']
+            parent = app_process.parent()
+            while parent is not None and parent.name() not in roots:
+                app_process = parent
+                parent = app_process.parent()
+            app = app_process.name()
+        elif 'app.slice' not in cgroup:
             app = 'System'
         else:
             match = app_slice_regex.match(cgroup)
@@ -106,8 +116,8 @@ for app in apps:
 power = sorted(apps.items(), key=lambda x: x[1], reverse=True)
 
 # Delete readings older than 10 hours
-# c.execute("DELETE FROM power WHERE time < ?", (datetime.datetime.now() - datetime.timedelta(hours=10),))
-# conn.commit()
+c.execute("DELETE FROM power WHERE time < ?", (datetime.datetime.now() - datetime.timedelta(hours=10),))
+conn.commit()
 
 # Create a PrettyTable object
 table = PrettyTable()
