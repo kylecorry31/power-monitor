@@ -69,8 +69,8 @@ def get_cpu_percent():
                 app_process = parent
                 parent = app_process.parent()
             app = app_process.name()
-        elif 'app.slice' not in cgroup:
-            app = 'System'
+            if app == 'flatpak-session-helper':
+                app = 'System'
         else:
             match = app_slice_regex.match(cgroup)
             if match:
@@ -121,7 +121,7 @@ conn.commit()
 
 # Create a PrettyTable object
 table = PrettyTable()
-table.field_names = ["App", "Power Usage (%)", "Active"]
+table.field_names = ["App", "CPU Power Usage (%)", "Active"]
 
 # Add rows to the table
 for app in power:
