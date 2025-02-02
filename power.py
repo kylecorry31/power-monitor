@@ -8,7 +8,7 @@ import re
 
 log_db = "~/power.db"
 
-app_slice_regex = re.compile(r".*app\.slice/(.+)-[0-9]+\.scope")
+app_slice_regex = re.compile(r".*app\.slice/(app-.+)-[0-9]+\.scope")
 discharging_regex = re.compile(r".*state:\s*discharging", re.DOTALL)
 percent_regex = re.compile(r".*percentage:\s*([0-9.]+)%.*", re.DOTALL)
 energy_regex = re.compile(r".*energy:\s*([0-9.]+)\s*Wh.*", re.DOTALL)
@@ -88,7 +88,8 @@ def get_cpu_percent():
                 app_process = parent
                 parent = app_process.parent()
             app = app_process.name()
-            if app == 'flatpak-session-helper':
+            # TODO: Improve detection
+            if app == 'flatpak-session-helper' or app == 'p11-kit-server':
                 app = 'System'
         else:
             match = app_slice_regex.match(cgroup)
@@ -169,7 +170,7 @@ if  last_battery_stats is not None:
 
 # Create a PrettyTable object
 table = PrettyTable()
-table.field_names = ["App", "Power Usage (%)", "Energy (Wh)", "Battery Usage (%)", "Active"]
+table.field_names = ["App", "CPU (%)", "Energy (Wh)", "Battery (%)", "Active"]
 
 # Add rows to the table
 for app in power:
