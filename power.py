@@ -5,6 +5,7 @@ import sqlite3
 from prettytable import PrettyTable
 import psutil
 import re
+import shutil
 
 log_db = "~/power.db"
 
@@ -116,8 +117,24 @@ def get_cpu_percent():
                     if app in flatpak_map:
                         app = flatpak_map[app]
                 else:
-                    # TODO: Get user displayable name for gnome apps
-                    app = match.group(1).replace('app-gnome-', '').split('\\')[0]
+                    app = app.replace('app-gnome-', '').replace('\\x2d', '-')
+                    try:
+                        desktop = None
+                        if os.path.exists('/usr/share/applications/' + app + '.desktop'):
+                            desktop = '/usr/share/applications/' + app + '.desktop'
+                        elif os.path.exists(os.path.expanduser('~/.local/share/applications/' + app + '.desktop')):
+                            desktop = os.path.expanduser('~/.local/share/applications/' + app + '.desktop')
+                        elif os.path.exists('/var/lib/flatpak/exports/share/applications/' + app + '.desktop'):
+                            desktop = '/var/lib/flatpak/exports/share/applications/' + app + '.desktop'
+
+                        if desktop is not None:
+                            with open(desktop) as f:
+                                desktop = f.read()
+                                match = re.search(r"Name=(.*)", desktop)
+                                if match:
+                                    app = match.group(1)
+                    except:
+                        pass
             else:
                 app = 'System'
         if app in apps:
@@ -141,8 +158,6 @@ conn.commit()
 
 # Log the power usage
 for app in cpu:
-    if cpu[app] < 0.01:
-        continue
     c.execute("INSERT INTO power VALUES (?, ?, ?)", (now, app, cpu[app]))
 conn.commit()
 
@@ -196,6 +211,8 @@ table.field_names = ["App", "CPU (%)", "Energy (Wh)", "Battery (%)", "Active"]
 
 # Add rows to the table
 for app in power:
+    if app[1] < 0.001:
+        continue
     energy = -energy_delta * app[1] / 100
     battery = -percent_delta * app[1] / 100
     table.add_row([app[0], f"{app[1]:.2f}", f"{energy:.2f}", f"{battery:.2f}", "Yes" if app[0] in cpu else "No"])
