@@ -5,7 +5,6 @@ import sqlite3
 from prettytable import PrettyTable
 import psutil
 import re
-import shutil
 
 log_db = "~/power.db"
 
@@ -156,6 +155,11 @@ conn.commit()
 # c.execute("DELETE FROM battery")
 # conn.commit()
 
+# Delete readings older than 10 hours
+c.execute("DELETE FROM power WHERE time < ?", (now - datetime.timedelta(hours=10),))
+c.execute("DELETE FROM battery WHERE time < ?", (now - datetime.timedelta(hours=10),))
+conn.commit()
+
 # Log the power usage
 for app in cpu:
     c.execute("INSERT INTO power VALUES (?, ?, ?)", (now, app, cpu[app]))
@@ -168,14 +172,14 @@ last_battery_stats = None
 if battery["discharging"]:
     last_charging_reading = c.execute("SELECT time FROM battery WHERE charging = 1 ORDER BY time DESC LIMIT 1").fetchone()
     if last_charging_reading is not None:
-        start_time = max(start_time, last_charging_reading[0])
+        start_time = last_charging_reading[0]
     first_discharging_reading = c.execute("SELECT time, percent, energy FROM battery WHERE charging = 0 AND time >= ? ORDER BY time ASC LIMIT 1", (start_time,)).fetchone()
     if first_discharging_reading is not None:
         last_battery_stats = {
             "percent": first_discharging_reading[1],
             "energy": first_discharging_reading[2]
         }
-        start_time = max(start_time, first_discharging_reading[0])
+        start_time = first_discharging_reading[0]
 c.execute("SELECT app, power FROM power WHERE time >= ?", (start_time,))
 power = c.fetchall()
 
@@ -193,11 +197,6 @@ for app in apps:
 
 power = sorted(apps.items(), key=lambda x: x[1], reverse=True)
 
-# Delete readings older than 10 hours
-c.execute("DELETE FROM power WHERE time < ?", (now - datetime.timedelta(hours=10),))
-c.execute("DELETE FROM battery WHERE time < ?", (now - datetime.timedelta(hours=10),))
-conn.commit()
-
 # Calculate battery status
 percent_delta = 0
 energy_delta = 0
@@ -209,13 +208,25 @@ if  last_battery_stats is not None:
 table = PrettyTable()
 table.field_names = ["App", "CPU (%)", "Energy (Wh)", "Battery (%)", "Active"]
 
-# Add rows to the table
+# TODO: Let the user specify this
+screen_estimate = 20
+total_percent = 100 / (1 - screen_estimate / 100)
+
+values = []
 for app in power:
     if app[1] < 0.001:
         continue
-    energy = -energy_delta * app[1] / 100
-    battery = -percent_delta * app[1] / 100
-    table.add_row([app[0], f"{app[1]:.2f}", f"{energy:.2f}", f"{battery:.2f}", "Yes" if app[0] in cpu else "No"])
+    energy = -energy_delta * app[1] / total_percent
+    battery = -percent_delta * app[1] / total_percent
+    values.append([app[0], app[1], energy, battery])
+
+values.append(["Screen", 0, -energy_delta * screen_estimate / 100, -percent_delta * screen_estimate / 100])
+
+values = sorted(values, key=lambda x: x[2], reverse=True)
+
+# Add rows to the table
+for app in values:
+    table.add_row([app[0], f"{app[1]:.2f}", f"{app[2]:.2f}", f"{app[3]:.2f}", "Yes" if (app[0] in cpu or app[0] == 'Screen') else "No"])
 
 # Print the table
 print(f"Power usage since {start_time}")
