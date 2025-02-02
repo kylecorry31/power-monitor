@@ -106,8 +106,10 @@ def get_cpu_percent():
 battery = get_battery_info()
 cpu = get_cpu_percent()
 
+now = datetime.datetime.now()
+
 # Log the battery usage
-c.execute("INSERT INTO battery VALUES (?, ?, ?, ?, ?)", (datetime.datetime.now(), not battery["discharging"], battery["percent"], battery["energy"], battery["energy_full"]))
+c.execute("INSERT INTO battery VALUES (?, ?, ?, ?, ?)", (now, not battery["discharging"], battery["percent"], battery["energy"], battery["energy_full"]))
 conn.commit()
 
 # c.execute("DELETE FROM power")
@@ -118,12 +120,13 @@ conn.commit()
 for app in cpu:
     if cpu[app] < 0.01:
         continue
-    c.execute("INSERT INTO power VALUES (?, ?, ?)", (datetime.datetime.now(), app, cpu[app]))
+    c.execute("INSERT INTO power VALUES (?, ?, ?)", (now, app, cpu[app]))
 conn.commit()
 
 # Print the power usage from the last hour
-start_time = datetime.datetime.now() - datetime.timedelta(hours=1)
+start_time = now - datetime.timedelta(hours=1)
 last_battery_stats = None
+# TODO: Add option to specify start time (ignore charging times)
 if battery["discharging"]:
     last_charging_reading = c.execute("SELECT time FROM battery WHERE charging = 1 ORDER BY time DESC LIMIT 1").fetchone()
     if last_charging_reading is not None:
@@ -153,8 +156,8 @@ for app in apps:
 power = sorted(apps.items(), key=lambda x: x[1], reverse=True)
 
 # Delete readings older than 10 hours
-c.execute("DELETE FROM power WHERE time < ?", (datetime.datetime.now() - datetime.timedelta(hours=10),))
-c.execute("DELETE FROM battery WHERE time < ?", (datetime.datetime.now() - datetime.timedelta(hours=10),))
+c.execute("DELETE FROM power WHERE time < ?", (now - datetime.timedelta(hours=10),))
+c.execute("DELETE FROM battery WHERE time < ?", (now - datetime.timedelta(hours=10),))
 conn.commit()
 
 # Calculate battery status
