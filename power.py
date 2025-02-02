@@ -64,6 +64,21 @@ def get_cpu_percent():
     children = process.children(recursive=True)
     lines = power.split("\n")
     apps = {}
+    flatpak_map = {}
+
+    # List all flatpak apps
+    try:
+        flatpak_list = subprocess.check_output(["flatpak", "list"]).decode("utf-8")
+        flatpak_apps = flatpak_list.split("\n")
+        for app in flatpak_apps:
+            if app == "":
+                continue
+            app_name = app.split("\t")[0]
+            app_id = app.split("\t")[1]
+            flatpak_map[app_id] = app_name
+    except:
+        pass
+
     for line in lines:
         if line == "":
             continue
@@ -94,8 +109,15 @@ def get_cpu_percent():
         else:
             match = app_slice_regex.match(cgroup)
             if match:
-                # TODO: Get user displayable name based on app type
-                app = match.group(1).replace('app-flatpak-', '').replace('app-gnome-', '').split('\\')[0]
+                app = match.group(1)
+
+                if app.startswith('app-flatpak-'):
+                    app = app.replace('app-flatpak-', '')
+                    if app in flatpak_map:
+                        app = flatpak_map[app]
+                else:
+                    # TODO: Get user displayable name for gnome apps
+                    app = match.group(1).replace('app-gnome-', '').split('\\')[0]
             else:
                 app = 'System'
         if app in apps:
