@@ -9,6 +9,10 @@ import re
 log_db = "~/power.db"
 
 app_slice_regex = re.compile(r".*app\.slice/(.+)-[0-9]+\.scope")
+discharging_regex = re.compile(r".*state:\s*discharging", re.DOTALL)
+percent_regex = re.compile(r".*percentage:\s*([0-9.]+)%.*", re.DOTALL)
+energy_regex = re.compile(r".*energy:\s*([0-9.]+)\s*Wh.*", re.DOTALL)
+energy_full_regex = re.compile(r".*energy-full:\s*([0-9.]+)\s*Wh.*", re.DOTALL)
 
 def adapt_datetime(ts):
     return ts.strftime('%Y-%m-%d %H:%M:%S.%f')
@@ -24,6 +28,7 @@ c = conn.cursor()
 
 # Create the database if it doesn't exist
 c.execute("CREATE TABLE IF NOT EXISTS power (time TIMESTAMP, app TEXT, power REAL, pid INTEGER)")
+c.execute("CREATE TABLE IF NOT EXISTS battery (time TIMESTAMP, charging BOOLEAN, percent INTEGER, energy REAL, energy_full REAL)")
 
 def is_subprocess(pid, my_pid, children):
     if pid == my_pid:
@@ -37,6 +42,20 @@ def is_subprocess(pid, my_pid, children):
 def process_exists(pid):
     return psutil.pid_exists(pid)
 
+def get_battery_info():
+    # TODO: Determine the correct battery
+    output = subprocess.check_output(["upower", "-i", "/org/freedesktop/UPower/devices/battery_BAT1"]).decode("utf-8")
+    discharging = discharging_regex.match(output) is not None
+    percent = percent_regex.match(output)
+    if percent is not None:
+        percent = int(percent.group(1))
+    energy = energy_regex.match(output)
+    if energy is not None:
+        energy = float(energy.group(1))
+    energy_full = energy_full_regex.match(output)
+    if energy_full is not None:
+        energy_full = float(energy_full.group(1))
+    return {"discharging": discharging, "percent": percent, "energy": energy, "energy_full": energy_full}
 
 def get_cpu_percent():
     # Get the current power draw for each app
@@ -84,9 +103,15 @@ def get_cpu_percent():
             apps[app] = pcpu
     return apps
 
+battery = get_battery_info()
 cpu = get_cpu_percent()
 
+# Log the battery usage
+c.execute("INSERT INTO battery VALUES (?, ?, ?, ?, ?)", (datetime.datetime.now(), not battery["discharging"], battery["percent"], battery["energy"], battery["energy_full"]))
+conn.commit()
+
 # c.execute("DELETE FROM power")
+# c.execute("DELETE FROM battery")
 # conn.commit()
 
 # Log the power usage
@@ -98,7 +123,19 @@ conn.commit()
 
 # Print the power usage from the last hour
 start_time = datetime.datetime.now() - datetime.timedelta(hours=1)
-c.execute("SELECT app, power FROM power WHERE time > ?", (start_time,))
+last_battery_stats = None
+if battery["discharging"]:
+    last_charging_reading = c.execute("SELECT time FROM battery WHERE charging = 1 ORDER BY time DESC LIMIT 1").fetchone()
+    if last_charging_reading is not None:
+        start_time = max(start_time, last_charging_reading[0])
+    first_discharging_reading = c.execute("SELECT time, percent, energy FROM battery WHERE charging = 0 AND time >= ? ORDER BY time ASC LIMIT 1", (start_time,)).fetchone()
+    if first_discharging_reading is not None:
+        last_battery_stats = {
+            "percent": first_discharging_reading[1],
+            "energy": first_discharging_reading[2]
+        }
+        start_time = max(start_time, first_discharging_reading[0])
+c.execute("SELECT app, power FROM power WHERE time >= ?", (start_time,))
 power = c.fetchall()
 
 apps = {}
@@ -117,18 +154,28 @@ power = sorted(apps.items(), key=lambda x: x[1], reverse=True)
 
 # Delete readings older than 10 hours
 c.execute("DELETE FROM power WHERE time < ?", (datetime.datetime.now() - datetime.timedelta(hours=10),))
+c.execute("DELETE FROM battery WHERE time < ?", (datetime.datetime.now() - datetime.timedelta(hours=10),))
 conn.commit()
+
+# Calculate battery status
+percent_delta = 0
+energy_delta = 0
+if  last_battery_stats is not None:
+    percent_delta = battery["percent"] - last_battery_stats["percent"]
+    energy_delta = battery["energy"] - last_battery_stats["energy"]
 
 # Create a PrettyTable object
 table = PrettyTable()
-table.field_names = ["App", "CPU Power Usage (%)", "Active"]
+table.field_names = ["App", "Power Usage (%)", "Energy (Wh)", "Battery Usage (%)", "Active"]
 
 # Add rows to the table
 for app in power:
-    table.add_row([app[0], f"{app[1]:.2f}", "Yes" if app[0] in cpu else "No"])
+    energy = -energy_delta * app[1] / 100
+    battery = -percent_delta * app[1] / 100
+    table.add_row([app[0], f"{app[1]:.2f}", f"{energy:.2f}", f"{battery:.2f}", "Yes" if app[0] in cpu else "No"])
 
 # Print the table
-print("Power usage in the last hour:")
+print(f"Power usage since {start_time}")
 print(table)
 
 conn.close()
